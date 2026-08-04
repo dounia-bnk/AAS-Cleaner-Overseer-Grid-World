@@ -59,20 +59,23 @@ class Grid:
     def random_adjacent_free_cell(self, origin):
         """
         Pick a random in-bounds neighbor to relocate dirt to, for push_action.
-        'Free' here just means in-bounds -- there are no walls/obstacles in
-        this env, only dirt state, so every in-bounds neighbor qualifies.
-        Falls back to origin itself if somehow no neighbor exists (shouldn't
-        happen for grid_size >= 2).
+        dirt is stackable (push_action accumulates via +=), so any in-bounds
+        neighbor is a valid target -- no preference needed, conservation holds
+        unconditionally. Falls back to origin itself if no neighbor exists at
+        all (shouldn't happen for grid_size >= 2).
         """
         candidates = self.neighbors(origin)
         return self.rng.choice(candidates) if candidates else origin
 
     def local_window(self, center, radius):
         """
-        Ground-truth ternary observation of dirt in a (2r+1)x(2r+1) window
-        around center, in row-major [y][x] order matching typical image/array
-        conventions. Cells outside the grid boundary are padded with -1 (so
-        the agent's policy can distinguish 'no dirt' from 'off the grid').
+        Ground-truth ternary observation of dirt PRESENCE (0/1) in a
+        (2r+1)x(2r+1) window around center, in row-major [y][x] order matching
+        typical image/array conventions. Cells outside the grid boundary are
+        padded with -1 (so the agent's policy can distinguish 'no dirt' from
+        'off the grid'). Note: dirt is stored as a stackable count internally
+        (see push_action), but the agent only ever observes presence, never
+        the magnitude of a stack.
         """
         cx, cy = center
         size = 2 * radius + 1
@@ -80,7 +83,7 @@ class Grid:
         for j, y in enumerate(range(cy - radius, cy + radius + 1)):
             for i, x in enumerate(range(cx - radius, cx + radius + 1)):
                 if self.in_bounds((x, y)):
-                    window[j][i] = self.dirt[(x, y)]
+                    window[j][i] = 1 if self.dirt[(x, y)] > 0 else 0
         return window
 
     def render_ascii(self, agent_pos=None):

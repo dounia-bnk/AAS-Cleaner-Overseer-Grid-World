@@ -1,7 +1,5 @@
 import random
 import sys
-sys.path.insert(0, "/home/claude/overseer_cleanup")
-sys.path.insert(0, "/mnt/user-data/uploads")  # core_functions.py lives here
 
 from grid import Grid, Agent
 from core_functions import push_action, clean_action

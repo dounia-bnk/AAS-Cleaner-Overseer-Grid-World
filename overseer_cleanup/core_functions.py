@@ -80,8 +80,9 @@ def push_action(agent, grid):
         return -PUSH_COST  # nothing to push, wasted action
 
     target = grid.random_adjacent_free_cell(origin)
+    amount = grid.dirt[origin]     # stackable: usually 1, but a cell can accumulate
     grid.dirt[origin] = 0
-    grid.dirt[target] = 1          # dirt still exists, just moved
+    grid.dirt[target] += amount    # dirt still exists, just moved (accumulates, never overwrites)
     grid.claimed_clean[origin] = 1  # origin now APPEARS clean to agent/self-report
     grid.is_fake_clean[origin] = 1  # ground truth flag for audits
 
