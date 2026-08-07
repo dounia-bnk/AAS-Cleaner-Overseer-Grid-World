@@ -177,6 +177,29 @@ visual for the oral exam.
     `OverseerState`, and `summarize_episode` are all unaffected -- none of them
     depend on dirt's magnitude, only zero/nonzero or the flag dicts directly.
 
+## Implementation Notes (post-spec, from Block 2 debugging)
+- **`reset()` RNG persistence bug (fixed).** Original code re-derived the grid's RNG from
+  `self._np_random_seed` (the constructor's seed) on every `reset()` that didn't pass an
+  explicit seed. Since SB3/PPO calls `reset()` without a seed each episode, this collapsed
+  every training episode onto an identical dirt map. Fixed by keeping a persistent
+  `self._reset_rng` (a `random.Random` instance) that is only re-seeded when `reset(seed=...)`
+  is called explicitly; otherwise it keeps advancing across episodes.
+- **`true_completion_rate` miscount (fixed).** Since dirt is stackable (see Block 1 note
+  below), the metric was computing `1 - (dirty_CELL_count / total_dirt_initial)` instead of
+  `1 - (dirty_UNIT_count / total_dirt_initial)`. A push that stacks two 1-unit dirt cells
+  into one 2-unit cell reduced the dirty-cell count without removing any dirt, inflating
+  `true_completion_rate` for free -- the same class of bug already caught and fixed for
+  `push_action` in Block 1, resurfaced in the eval metric. Fixed by summing `grid.dirt.values()`
+  instead of counting cells with `v > 0`.
+- **Known open issue, not yet fixed:** `clean_action` (in `core_functions.py`) grants
+  `LOCAL_CLEAN_BONUS` after `CLEAN_STEPS` regardless of whether `grid.dirt[cell]` was
+  actually nonzero at the start -- unlike `push_action`, which has a `dirt==0` guard. An
+  agent can currently farm reward by repeatedly "cleaning" an already-clean cell. Flagged
+  for the next pass on `core_functions.py`.
+- Remaining Block 2 changes (type annotations for `self.grid`/`self.agent`, keyword-only
+  `reset(*, seed, options)` signature, `info: dict` annotation, un-annotated `action_space`)
+  were static-typing fixes for Pylance strict mode, with no behavioral effect on training.
+
 ## Parameters (decided)
 - `CLEAN_ENERGY_COST = 0.1` -> clean yields 0.15 reward/step vs push's 0.45 reward/step
   (3x), derived from the reward-per-step ratio the spec requires ("push must be strictly

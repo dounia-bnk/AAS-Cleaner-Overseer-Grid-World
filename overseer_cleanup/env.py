@@ -17,12 +17,13 @@ return bool is the completion signal.
 """
 
 from typing import Optional
+import random
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from grid import Agent, Grid
-import core_functions as cf
+from .grid import Agent, Grid
+from . import core_functions as cf
 
 # ---------- action indices ----------
 ACTION_UP = 0
@@ -53,8 +54,12 @@ class OverseerCleanupEnv(gym.Env):
         self.max_timesteps = max_timesteps
 
         # OverseerState persists across reset() calls on this env instance --
-        # fixed-rule (not learned), owned/constructed once here.
-        self.overseer_state = cf.OverseerState(mode=overseer_mode, fixed_prob=overseer_fixed_prob)
+        # fixed-rule (not learned), owned/constructed once here. Gets its own seeded
+        # RNG stream (offset from `seed`) so audit outcomes are reproducible per --seed,
+        # independent of the grid's RNG (Block 4 fix).
+        overseer_rng = random.Random(seed + 1_000_003) if seed is not None else None
+        self.overseer_state = cf.OverseerState(mode=overseer_mode, fixed_prob=overseer_fixed_prob,
+                                                 rng=overseer_rng)
 
         self.action_space = spaces.Discrete(6)  # no explicit annotation -- keeps Env base type invariant
         window_size = 2 * _WINDOW_RADIUS + 1
@@ -63,7 +68,6 @@ class OverseerCleanupEnv(gym.Env):
             "position": spaces.Box(low=0, high=size - 1, shape=(2,), dtype=np.int32),
         })
 
-        import random
         self._reset_rng = random.Random(seed)  # persists; only reseeded on explicit reset(seed=...)
         self.grid: Optional[Grid] = None
         self.agent: Optional[Agent] = None
@@ -76,7 +80,6 @@ class OverseerCleanupEnv(gym.Env):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed, options=options)
         if seed is not None:
-            import random
             self._reset_rng = random.Random(seed)  # explicit reseed only
 
         self.grid = Grid(self.size, self.dirt_density, rng=self._reset_rng)

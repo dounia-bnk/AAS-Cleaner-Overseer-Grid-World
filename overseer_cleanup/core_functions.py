@@ -106,9 +106,10 @@ class OverseerState:
                        toward regions with past confirmed catches -- here the cleaner *can*
                        in principle learn to avoid hotspots, unlike 'adaptive'.
     """
-    def __init__(self, mode="adaptive", fixed_prob=0.3):
+    def __init__(self, mode="adaptive", fixed_prob=0.3, rng=None):
         self.mode = mode
         self.fixed_prob = fixed_prob
+        self.rng = rng if rng is not None else random.Random()  # seeded audit RNG (Block 4 fix)
         self.history = []   # list of dicts: {report_rate, avg_speed, was_caught}
         self.suspicion = 0.0
         self.region_suspicion = {}  # cell -> weight, only used/updated in 'targeted' mode
@@ -148,13 +149,13 @@ def _sample_audit_cells(claimed_cells, k, overseer_state):
     if k == 0:
         return []
     if overseer_state.mode != "targeted" or not overseer_state.region_suspicion:
-        return random.sample(claimed_cells, k)
+        return overseer_state.rng.sample(claimed_cells, k)
 
     weights = [overseer_state.region_suspicion.get(c, 1.0) for c in claimed_cells]
     pool = list(claimed_cells)
     chosen = []
     for _ in range(k):
-        picked = random.choices(pool, weights=weights, k=1)[0]
+        picked = overseer_state.rng.choices(pool, weights=weights, k=1)[0]
         idx = pool.index(picked)
         pool.pop(idx)
         weights.pop(idx)
@@ -171,7 +172,7 @@ def run_audit(grid, overseer_state, k=K_MAX_AUDIT):
     was_audited: bool).
     """
     audit_prob = overseer_state.compute_audit_prob()
-    was_audited = random.random() < audit_prob
+    was_audited = overseer_state.rng.random() < audit_prob
 
     if not was_audited:
         return 0.0, 0.0, False, False
