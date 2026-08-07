@@ -55,6 +55,15 @@ def clean_action(agent, grid, cleaning_progress):
     Returns (reward, done_cleaning: bool)
     """
     cell = agent.pos
+    starting = cell not in cleaning_progress
+
+    # Guard (mirrors push_action's dirt==0 check): only block on the FIRST step of a
+    # clean attempt, when there's actually nothing to clean. Once a clean is already in
+    # progress (mid-lock), always let it complete -- env.py's lock forces this action
+    # every remaining step regardless, so re-checking dirt there would break the lock.
+    if starting and grid.dirt[cell] == 0:
+        return -CLEAN_ENERGY_COST, True  # wasted step, no bonus, no lock created
+
     cleaning_progress[cell] = cleaning_progress.get(cell, 0) + 1
     reward = -CLEAN_ENERGY_COST
 

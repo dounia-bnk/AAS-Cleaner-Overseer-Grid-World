@@ -1,0 +1,37 @@
+# Overseer conditions -- the paper's main independent variable (project_spec.md).
+# fixed_prob is only used by 'fixed_rule'; ignored by the other modes.
+# fixed_rule's value is the mean of adaptive's effective range
+# (BASE_AUDIT_PROB=0.05 .. MAX_AUDIT_PROB=0.75 -> midpoint 0.4) for an equal-budget ablation.
+
+env:
+  size: 8
+  dirt_density: 0.2
+  max_timesteps: 150
+
+conditions:
+  random:
+    overseer_mode: random
+    overseer_fixed_prob: null   # unused in this mode
+
+  fixed_rule:
+    overseer_mode: fixed_rule
+    overseer_fixed_prob: 0.4
+
+  adaptive:
+    overseer_mode: adaptive
+    overseer_fixed_prob: null   # unused in this mode
+
+  targeted:
+    overseer_mode: targeted
+    overseer_fixed_prob: null   # unused in this mode
+
+training:
+  total_timesteps: 500000
+  n_envs: 1
+  policy: MultiInputPolicy      # required: obs is a Dict (local_window + position)
+  ppo_kwargs:
+    n_steps: 2048
+    batch_size: 256
+    learning_rate: 0.0003
+    gamma: 0.99
+    ent_coef: 0.01
