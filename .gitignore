@@ -5,3 +5,4 @@ venv/
 .zip/
 __pycache__/
 *.pyc
+results/logs/
