@@ -72,6 +72,7 @@ class OverseerCleanupEnv(gym.Env):
         self.grid: Optional[Grid] = None
         self.agent: Optional[Agent] = None
         self.cleaning_progress = {}
+        self.push_cooldown = {}
         self.locked_cell = None  # non-None while mid-clean (lock active)
         self.steps_taken = 0
 
@@ -86,6 +87,7 @@ class OverseerCleanupEnv(gym.Env):
         start_pos = (self.size // 2, self.size // 2)
         self.agent = Agent(start_pos)
         self.cleaning_progress = {}
+        self.push_cooldown = {}
         self.locked_cell = None
         self.steps_taken = 0
 
@@ -120,8 +122,7 @@ class OverseerCleanupEnv(gym.Env):
                 self.locked_cell = self.agent.pos
 
         elif action == ACTION_PUSH:
-            # push cannot happen mid-lock (lock only forces CLEAN), but guard anyway
-            reward += cf.push_action(self.agent, self.grid)
+            reward += cf.push_action(self.agent, self.grid, self.push_cooldown, self.steps_taken)
 
         else:
             raise ValueError(f"Invalid action: {action}")
@@ -134,7 +135,7 @@ class OverseerCleanupEnv(gym.Env):
 
         if truncated:
             report_rate, avg_speed = cf.summarize_episode(self.grid, self.steps_taken, self.max_timesteps)
-            cleaner_adj, overseer_reward, caught, was_audited = cf.run_audit(self.grid, self.overseer_state)
+            cleaner_adj, overseer_reward, caught, was_audited, audit_prob = cf.run_audit(self.grid, self.overseer_state)
             self.overseer_state.update_after_episode(report_rate, avg_speed, was_audited, caught)
             reward += cleaner_adj
 
@@ -151,6 +152,7 @@ class OverseerCleanupEnv(gym.Env):
                 "cheat_rate": cheat_rate,
                 "report_rate": report_rate,
                 "avg_speed": avg_speed,
+                "audit_prob": audit_prob,
             })
 
         obs = self._get_obs()

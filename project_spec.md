@@ -222,3 +222,115 @@ visual for the oral exam.
   dynamic/adaptive institution rather than a static rule, principal-agent problem analogy)
 - Code and report must be original; any external code snippets must be explicitly cited;
   will be checked for plagiarism
+
+## Implementation Notes (post-spec, from Block 5 — reward tuning & debugging)
+
+### Context
+After Block 2, exploratory single-seed (seed=0) runs across all four overseer conditions
+surfaced that `cheat_rate` converged to ~1.0 regardless of condition, including `adaptive`,
+contradicting the Experiment 1 hypothesis (adaptive oversight should suppress cheating
+relative to `random`/`fixed_rule` at comparable budget). The following documents the
+diagnostic process, findings, and current open status.
+
+### Diagnostic 1: audit_prob was not being logged
+Initial runs only logged `report_rate`, `cheat_rate`, `true_completion_rate`, and reward —
+no direct visibility into what `audit_prob` the overseer was actually using per episode.
+Added `audit_prob` as a 5th return value from `run_audit()` and wired it into `env.py`'s
+`info` dict + `train.py`'s `Monitor(info_keywords=...)`. Confirmed after this fix:
+- `random`: flat `audit_prob=0.05` (as expected, `BASE_AUDIT_PROB`).
+- `fixed_rule`: flat `audit_prob=0.4` (as configured, `overseer_fixed_prob`).
+- `adaptive`/`targeted`: both ramp to `MAX_AUDIT_PROB=0.75` within ~50 episodes and stay
+  pinned at the cap for the rest of training. Confirms the suspicion/rolling-window
+  mechanism itself works correctly — audit frequency *is* responsive to cheating.
+
+### Diagnostic 2: EV imbalance at original constants
+With `FAKE_CLEAN_PENALTY=-3.0`, `K_MAX_AUDIT=3`, hand-computed expected value for a
+fully-cheating agent (~50 pushes/episode) at `adaptive`'s audit_prob ceiling (0.75):
+- Expected cumulative push reward: ~50 × 0.45 ≈ **+22.5**
+- Expected audit penalty: 0.75 × 3 × 3.0 ≈ **−6.75**
+
+EV strongly favors cheating even at maximum audit pressure — explains why `adaptive`'s
+cheat_rate plot was visually indistinguishable from `fixed_rule`'s. This ruled out a
+logging/wiring bug as the root cause of the first round of flat results and reframed it as
+a constants-tuning problem.
+
+### Tuning pass 1: FAKE_CLEAN_PENALTY sweep
+Single-lever sweep on `FAKE_CLEAN_PENALTY`, holding `MAX_AUDIT_PROB=0.75` and
+`K_MAX_AUDIT=3` fixed, seed=0, `adaptive` condition only:
+
+| Value | Result |
+|---|---|
+| −3.0 (orig) | cheat_rate saturates ~1.0, reward climbs monotonically — same as `fixed_rule`, no differentiation. |
+| −15.0 | Overcorrected: reward permanently negative and highly unstable, cheat_rate oscillates 0–1 with no convergence — agent can't settle on *any* stable strategy, honest or cheating. |
+| −7.0 | Reward hovers noisy but with an upward-trending negative-to-slightly-positive band; cheat_rate still eventually saturates ~1.0 by late training (but slower than −3.0/−15.0). Partial signal, not full suppression. |
+| −10.0 | Best qualitative result at this K_MAX_AUDIT: cheat_rate oscillates 0–1 throughout training with no saturation, reward stays near zero (roughly −30 to +10 band) with no monotonic climb. Read as genuine behavioral tension — cheating no longer strictly dominant, agent repeatedly re-tries both strategies. |
+
+`fixed_rule` re-run at −10.0 (seed 0) for contrast: cheat_rate still saturates ~0.95–1.0
+(later onset, ~ep1200 vs ~ep200, but same ceiling), reward climbs to a stable positive
+plateau (~20–25) — i.e. `fixed_rule` converges to cheating even at the same penalty where
+`adaptive` stays unresolved. This is consistent with the Experiment 1 hypothesis: constant
+severity alone doesn't suppress cheating without adaptivity.
+
+### Discovery: K_MAX_AUDIT undersized relative to grid scale
+With an 8×8 grid (~13 dirt cells at 20% density) and episodes long enough for the agent to
+claim-clean 40+ cells, `K_MAX_AUDIT=3` samples only a small fraction of claimed cells per
+audit — most individual cheats are statistically invisible to any single audit event. This
+was likely a bigger driver of the cheat_rate ceiling than the penalty value itself.
+
+Raised `K_MAX_AUDIT` to 8 and re-tuned `FAKE_CLEAN_PENALTY` down to −6 accordingly (higher
+catch odds should need less per-catch penalty for equivalent deterrence). Result: cheat_rate
+remained very noisy and audit_prob still saturated near the cap, without producing a cleaner
+signal than the −10.0/K=3 run. This motivated a deeper look at the reward structure itself
+rather than continuing to tune constants pairwise.
+
+### Structural issue found: unbounded reward farming via push loops
+`push_action` awards `LOCAL_CLEAN_BONUS` on **every** call where the origin cell becomes
+claimed-clean, with no check for whether that specific dirt unit had already been "cleaned"
+(fake or real) before. Since push relocates rather than destroys dirt, and the target cell's
+`claimed_clean`/`is_fake_clean` flags reset on arrival (Block 1 anti-laundering fix), an
+agent can repeatedly push the same dirt unit back and forth between two adjacent cells,
+re-triggering the bonus on every single relocation. Over a 150-step episode this allows
+reward to scale roughly linearly with steps taken from a *single* dirt unit (e.g. ~75
+round-trips × 0.45 ≈ +33 reward from one unit), with only one audit event at episode end to
+catch it. This explains:
+- why no `FAKE_CLEAN_PENALTY` value fully converged: reward growth from farming was
+  effectively unbounded, so some volume of cheating always outran a fixed per-catch cost.
+- why cheat_rate stayed noisy rather than stabilizing: the optimal farming location shifted
+  under audit-sampling / region-suspicion pressure, rather than the agent settling into one
+  strategy.
+
+**Fix applied:** added a per-cell push cooldown (`PUSH_COOLDOWN_STEPS=5`). `push_action`
+still relocates dirt and still costs `PUSH_COST` on every call, but only pays
+`LOCAL_CLEAN_BONUS` if the origin cell hasn't been claimed-clean within the last N steps.
+This removes the infinite-farming exploit while preserving dense per-step reward (as
+opposed to switching to a sparse end-of-episode-only reward scheme, which would have been a
+larger change to the RL problem).
+
+### Open issue after the farming fix (unresolved, next to investigate)
+Post-fix, reward dropped as expected (farming-inflated reward removed), **but cheat_rate is
+still converging to ~1.0.** Root cause identified: `push_action` marks `claimed_clean=1` /
+`is_fake_clean=1` on every call regardless of cooldown status — the cooldown only withholds
+the *reward bonus*, not the *ground-truth marking*. This means a single honest-looking full
+sweep of the grid (push every dirt cell exactly once, no repeats, no cleaning) already
+produces `cheat_rate≈1.0`, independent of farming. So the farming bug and the high
+steady-state cheat_rate turn out to be two separate issues:
+1. Farming (fixed): unbounded reward from repeated bonus triggers on the same dirt unit.
+2. Base single-pass EV (still open): even one push per dirt cell, no repeats, still beats
+   `clean` in expectation given a single end-of-episode audit sampling only `K_MAX_AUDIT`
+   cells out of a potentially much larger claimed-clean set.
+
+Hypothesis for (2): with only one audit opportunity per episode and `K_MAX_AUDIT` capped
+well below total dirt count, no penalty value may be able to push the EV of a full-grid
+single-pass cheat below that of cleaning — this would be a structural ceiling on what
+`FAKE_CLEAN_PENALTY` tuning alone can achieve, not a tuning problem. Next step: compute
+catch-probability for a full single-pass cheat under current `K_MAX_AUDIT` and audit
+frequency; consider whether audits need to fire more than once per episode to make risk
+scale with volume of cheating rather than being a single flat-probability snapshot.
+
+### Methodological note
+All tuning above was done on a single seed (seed=0) as an exploratory/debugging pass, per
+the plan of locking constants before committing to the full experimental sweep. Per the
+project's evaluation protocol (≥5 seeds, mean ± std), none of these single-seed results are
+reportable as final findings — they inform constant selection only. Full multi-seed sweep
+across all four conditions to be run once the base single-pass cheat_rate ceiling (open
+issue above) is resolved or confirmed structural.
