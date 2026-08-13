@@ -37,6 +37,7 @@ class Grid:
         self.dirt = {}
         self.claimed_clean = {}
         self.is_fake_clean = {}
+        
 
         for x in range(size):
             for y in range(size):
@@ -45,6 +46,27 @@ class Grid:
                 self.claimed_clean[cell] = 0
                 self.is_fake_clean[cell] = 0
 
+        self.total_dirt_initial = sum(self.dirt.values())
+        self.dirt = {}
+        self.dirt_units = {}      # cell -> list of unit ids currently there
+        self.claimed_clean = {}
+        self.is_fake_clean = {}
+        self.bonused_units = set()  # unit ids that already earned a bonus once, ever
+        
+        unit_id = 0
+        for x in range(size):
+            for y in range(size):
+                cell = (x, y)
+                if self.rng.random() < dirt_density:
+                    self.dirt[cell] = 1
+                    self.dirt_units[cell] = [unit_id]
+                    unit_id += 1
+                else:
+                    self.dirt[cell] = 0
+                    self.dirt_units[cell] = []
+                self.claimed_clean[cell] = 0
+                self.is_fake_clean[cell] = 0
+        
         self.total_dirt_initial = sum(self.dirt.values())
 
     def in_bounds(self, pos):

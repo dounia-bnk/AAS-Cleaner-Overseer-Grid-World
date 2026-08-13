@@ -334,3 +334,140 @@ project's evaluation protocol (≥5 seeds, mean ± std), none of these single-se
 reportable as final findings — they inform constant selection only. Full multi-seed sweep
 across all four conditions to be run once the base single-pass cheat_rate ceiling (open
 issue above) is resolved or confirmed structural.
+## Implementation Notes (post-spec, from Block 6 — reward-farming fix & instrumentation)
+
+### Structural fix: dirt-unit identity tracking (supersedes push cooldown)
+Diagnosed two distinct farming exploits in sequence:
+1. **Same-cell farming**: `push_action` re-awarded `LOCAL_CLEAN_BONUS` every time a cell
+   was re-marked claimed-clean, allowing the agent to ping-pong one dirt unit between two
+   adjacent cells for unbounded reward. First addressed with a per-cell cooldown
+   (`PUSH_COOLDOWN_STEPS`), which blocked same-cell reuse but not (2).
+2. **Grid-spread farming**: since dirt is conserved (never destroyed by `push`), the agent
+   could keep re-claiming *new* cells by relaying the same 1-2 physical dirt units across
+   the grid, diluting audit coverage (`K_MAX_AUDIT` fixed cells out of a growing, unbounded
+   claimed-cell set) without ever reusing a single cell -- cooldown didn't touch this.
+
+**Fix:** replaced cell-based bonus bookkeeping with dirt-*unit* identity. `Grid.__init__`
+now assigns each initial dirt unit a persistent `unit_id`, tracked per-cell in
+`grid.dirt_units` and carried along through every `push`. A global `grid.bonused_units`
+set records which unit ids have ever triggered `LOCAL_CLEAN_BONUS`; `push_action` and
+`clean_action` now only pay the bonus the *first* time a given unit is resolved (real or
+fake), regardless of how many times it's subsequently pushed. Dirt still relocates and
+`PUSH_COST`/`CLEAN_ENERGY_COST` are still charged on every attempt; only the bonus is
+capped per unit. `claimed_clean`/`is_fake_clean` marking on the origin cell is unchanged
+(fires on every push), preserving audit visibility.
+
+**Effect confirmed:** total episode reward is now bounded near
+`total_dirt_initial × (LOCAL_CLEAN_BONUS - PUSH_COST)` (~+5 at N=8/20% density) rather than
+climbing unboundedly (previously ~+20 to +35). The push-cooldown fix (`PUSH_COOLDOWN_STEPS`)
+is now redundant given unit tracking and can be removed/left as a harmless secondary guard.
+
+### New pattern observed post-fix: sustained oscillation, no convergence
+With constants reset to `FAKE_CLEAN_PENALTY=-3.0` (original) after the unit-tracking fix,
+`adaptive` (seed 0, ~4500+ episodes) shows `cheat_rate` cycling roughly between 0.3 and 0.9
+with no shrinking amplitude and no long-run drift toward either bound. `audit_prob` tracks
+this responsively (dips to ~0.7-0.8 when cheat_rate falls, returns to the ~0.9 cap as it
+rises), confirming the suspicion mechanism is actively engaging rather than saturating and
+sitting idle. Reward is negative throughout (~-2 to -16) and *inversely* tracks cheat_rate
+(reward troughs align with cheat_rate peaks) -- read as the audit-cost of sustained cheating
+actually being felt, rather than a flat/unresponsive relationship.
+
+This looks like a genuine limit-cycle / arms-race equilibrium rather than slow convergence,
+consistent with Experiment 2's design intent (oscillation dynamics under self-play-like
+pressure, even though only the cleaner is RL-trained in this build). Longer runs needed to
+confirm the cycle is stable rather than a slow drift; no further constant tuning planned
+unless amplitude/direction changes over a longer horizon.
+
+### Open question: reward floor vs. episode length
+Even a policy that resolves all dirt optimally nets only ~+5 from bonuses, but the fixed
+`max_timesteps=150` continues after all dirt is exhausted or resolved -- any further
+`push`/`clean` attempts on empty cells are pure cost with no possible offsetting bonus
+(guarded to `-PUSH_COST`/`-CLEAN_ENERGY_COST`, never negative-and-more). Suspect part of the
+persistent negative reward reflects PPO not yet having fully learned to stop
+attempting push/clean once local dirt is exhausted (movement is free and should be used to
+idle/wait instead). Not yet confirmed whether this is a training-convergence gap (more
+timesteps would fix it) or a genuine reward-scale mismatch relative to episode length
+requiring a design change (e.g. shorter episodes, or reward scaled up relative to per-step
+costs). Instrumentation added below to investigate directly.
+
+### New instrumentation added
+- **`info["steps_taken"]`** and **`info["wasted_actions"]`** (env.py, truncation step):
+  `wasted_actions` counts push/clean attempts on already-empty cells, to directly quantify
+  how much of a 150-step episode is spent on zero-payoff actions once dirt is exhausted.
+  Both added to `train.py`'s `Monitor(info_keywords=...)`.
+- **Position logging** (`env.py`): every step's `(x, y)` position is appended to
+  `results/position_log.csv` (columns: `episode, step, x, y`), but only for 1 in every
+  `log_every_n_episodes` (=250) episodes, to keep file size manageable while still sampling
+  trajectories across early/mid/late training. Used to build agent-visitation heatmaps
+  post-hoc and visually check whether the agent is actively roaming to chase/relocate dirt
+  or idling in place once local dirt is exhausted -- directly informs the open question above.
+  ## Implementation Notes (post-spec, from Block 6 continued — position logging)
+
+- **Sparse sampling caveat:** `position_log.csv` only logs 1 in every
+  `log_every_n_episodes` (=250) episodes. A short/partial training run (e.g. an early
+  ~50k-timestep smoke test, ~330 episodes) will only cross that threshold once (episode
+  250), producing a single-episode log — not a bug, just needs a full-length run
+  (500k timesteps / ~3333 episodes at max_timesteps=150) to get multiple samples (~13,
+  at episodes 250, 500, ... 3250) spread across early/mid/late training for the
+  movement-evolution analysis.
+- Before rerunning to completion, delete/rename any existing partial `position_log.csv`
+  so old short-run data doesn't mix with the new full run's samples.
+- `log_every_n_episodes` can be lowered (e.g. to 50) for denser sampling if a shorter
+  run is deliberately being analyzed instead of a full training run.
+- **Next analysis step:** with multiple logged episodes from a full run, extend
+  `position_analysis.ipynb` to plot per-episode stats (coverage_pct, revisit_ratio,
+  edge/corner_time_ratio) against episode number to see how exploration/idling behavior
+  changes as training progresses -- notebook already has this cell, just needs a
+  multi-episode CSV to populate it meaningfully.
+  ## Implementation Notes (post-spec, from Block 7 — mid-episode audits)
+
+### Motivation
+Block 6 identified a structural ceiling: a single end-of-episode audit sampling only
+`K_MAX_AUDIT` cells couldn't make catch-probability scale with volume of cheating, so
+even single-pass cheating (no repeats) beat `clean` in expectation regardless of
+`FAKE_CLEAN_PENALTY`. Fix: give audits multiple opportunities per episode instead of one.
+
+### Change: `AUDIT_INTERVAL_STEPS`
+`run_audit()` is now called every `AUDIT_INTERVAL_STEPS=30` steps (in addition to the
+final truncation step, ~5 audit opportunities per 150-step episode) rather than once at
+episode end. Each call still independently rolls `audit_prob` and samples up to
+`K_MAX_AUDIT` claimed-clean cells, unchanged from Block 2-6 mechanics.
+
+**Resolution on inspection:** cells sampled in a mid-episode audit have `claimed_clean`/
+`is_fake_clean` cleared after inspection (`resolve_after_audit=True`), so a later audit
+in the same episode can't re-catch or re-confirm the same cell. This means episode-end
+`cheat_rate` (computed from final `claimed_clean` state) now reflects cheating *since the
+last audit*, not cumulative cheating over the whole episode — a deliberate metric
+redefinition, noted as a limitation (see below).
+
+Per-episode overseer reward, catch count, and audit count are now accumulated across all
+audits in the episode (`_episode_overseer_reward`, `_episode_n_audits`,
+`_episode_n_catches`) and reported once in `info` at truncation. `OverseerState.
+update_after_episode` uses `any(audited)` / `any(caught)` across the episode, not just the
+final audit.
+
+### Result (seed 0, `adaptive`, exploratory)
+Cheat_rate now shows an early spike (~ep 200-450, peak ~0.18) followed by convergence to a
+near-zero steady state (~0.01-0.03), with brief bounded relapses (e.g. ~ep 1000, ~1900-2700,
+~3050) that are stamped back down by a reactive audit_prob spike each time. Reward
+plateaus ~4-4.5, close to the theoretical honest-completion ceiling (~+5), with reward
+peaks coinciding with relapse windows (cheating still pays briefly before audit_prob
+catches up). This is a qualitative change from Block 6's unresolved saturation/oscillation
+and is consistent with the Block 6 hypothesis that audit frequency, not just penalty
+magnitude, was the binding constraint. Single-seed/exploratory only — not yet compared
+against `random`/`fixed_rule` under the same mechanic, and not yet run across seeds.
+
+### Known limitation, not yet resolved
+`cheat_rate` as currently computed conflates "cheating this episode" with "cheating since
+last audit" once mid-episode resolution is in play. If the reported metric should reflect
+whole-episode cheating, this needs a separate cumulative counter (e.g. incremented in
+`push_action`/`clean_action` rather than read off final `claimed_clean` state) instead of
+the current end-of-episode snapshot. Flagged for before the metric is used in reported
+figures.
+
+### Scope note
+`targeted` condition (Experiment 4) deprioritized given time constraints — the
+mid-episode-audit change has not been validated against `region_suspicion`-weighted
+sampling, which remains the least-tested code path. Left as future work; core comparison
+(`random` / `fixed_rule` / `adaptive`) under the new mechanic takes priority for the
+report deadline.

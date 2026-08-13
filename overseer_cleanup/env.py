@@ -24,6 +24,8 @@ from gymnasium import spaces
 
 from .grid import Agent, Grid
 from . import core_functions as cf
+import csv
+import os
 
 # ---------- action indices ----------
 ACTION_UP = 0
@@ -75,6 +77,12 @@ class OverseerCleanupEnv(gym.Env):
         self.push_cooldown = {}
         self.locked_cell = None  # non-None while mid-clean (lock active)
         self.steps_taken = 0
+        self.episode_count = 0
+        self.log_every_n_episodes = 50
+        self._position_log_path = "results/position_log.csv"
+        if not os.path.exists(self._position_log_path):
+            with open(self._position_log_path, "w", newline="") as f:
+                csv.writer(f).writerow(["episode", "step", "x", "y"])
 
     # ---------- gym API ----------
 
@@ -90,9 +98,20 @@ class OverseerCleanupEnv(gym.Env):
         self.push_cooldown = {}
         self.locked_cell = None
         self.steps_taken = 0
+        self.position_history = []
+        self.locked_cell = None
+        self.steps_taken = 0
+        self.position_history = []
+        self._episode_audited_any = False
+        self._episode_caught_any = False
+        self._episode_overseer_reward = 0.0
+        self._episode_n_audits = 0
+        self._episode_n_catches = 0
 
         obs = self._get_obs()
         info = {"locked": False}
+        self.episode_count += 1
+        self._log_this_episode = (self.episode_count % self.log_every_n_episodes == 0)
         return obs, info
 
     def step(self, action):
@@ -122,22 +141,38 @@ class OverseerCleanupEnv(gym.Env):
                 self.locked_cell = self.agent.pos
 
         elif action == ACTION_PUSH:
-            reward += cf.push_action(self.agent, self.grid, self.push_cooldown, self.steps_taken)
+            reward += cf.push_action(self.agent, self.grid)
 
         else:
             raise ValueError(f"Invalid action: {action}")
-
+        self.position_history.append(self.agent.pos)
+        if self._log_this_episode:
+            with open(self._position_log_path, "a", newline="") as f:
+                csv.writer(f).writerow([self.episode_count, self.steps_taken, *self.agent.pos])
         self.steps_taken += 1
-        terminated = False  # no early termination, by design
+        terminated = False
         truncated = self.steps_taken >= self.max_timesteps
 
         info: dict = {"locked": self.locked_cell is not None, "forced_lock_override": forced_lock}
 
+        due_for_audit = (self.steps_taken % cf.AUDIT_INTERVAL_STEPS == 0)
+        if due_for_audit or truncated:
+            cleaner_adj, overseer_reward, caught, was_audited, audit_prob = cf.run_audit(
+                self.grid, self.overseer_state)
+            reward += cleaner_adj
+            self._episode_overseer_reward += overseer_reward
+            self._episode_audited_any = self._episode_audited_any or was_audited
+            self._episode_caught_any = self._episode_caught_any or caught
+            self._episode_n_audits += int(was_audited)
+            self._episode_n_catches += int(caught)
+            info.update({"audit_was_audited": was_audited,
+                         "audit_caught_cheating": caught,
+                         "audit_prob": audit_prob})
+
         if truncated:
             report_rate, avg_speed = cf.summarize_episode(self.grid, self.steps_taken, self.max_timesteps)
-            cleaner_adj, overseer_reward, caught, was_audited, audit_prob = cf.run_audit(self.grid, self.overseer_state)
-            self.overseer_state.update_after_episode(report_rate, avg_speed, was_audited, caught)
-            reward += cleaner_adj
+            self.overseer_state.update_after_episode(
+                report_rate, avg_speed, self._episode_audited_any, self._episode_caught_any)
 
             true_completion_rate = 1.0 - (sum(self.grid.dirt.values()) / max(1, self.grid.total_dirt_initial))
             claimed_cells = [c for c, v in self.grid.claimed_clean.items() if v == 1]
@@ -145,14 +180,15 @@ class OverseerCleanupEnv(gym.Env):
             cheat_rate = len(fake_cells) / max(1, len(claimed_cells))
 
             info.update({
-                "audit_was_audited": was_audited,
-                "audit_caught_cheating": caught,
-                "overseer_reward": overseer_reward,
+                "overseer_reward": self._episode_overseer_reward,
                 "true_completion_rate": true_completion_rate,
                 "cheat_rate": cheat_rate,
                 "report_rate": report_rate,
                 "avg_speed": avg_speed,
-                "audit_prob": audit_prob,
+                "steps_taken": self.steps_taken,
+                "n_audits": self._episode_n_audits,
+                "n_catches": self._episode_n_catches,
+                "position_history": list(self.position_history),
             })
 
         obs = self._get_obs()

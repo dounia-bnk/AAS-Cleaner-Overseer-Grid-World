@@ -51,7 +51,7 @@ def make_env(cfg: dict, condition: str, seed: int, log_dir: Path):
     # Monitor logs per-episode reward/length and writes the audit/completion
     # info fields to results/logs/<run_name>/monitor.csv for later analysis.
     env = Monitor(env, filename=str(log_dir / "monitor.csv"),
-                  info_keywords=("true_completion_rate", "cheat_rate", "report_rate", "audit_prob"))
+                  info_keywords=("true_completion_rate", "cheat_rate", "report_rate", "audit_prob","steps_taken"))
     return env
 
 
