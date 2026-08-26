@@ -1,33 +1,55 @@
-# Virtual Environments
+# =========================
+# Virtual environments
+# =========================
 .venv/
-env/
 venv/
+env/
 ENV/
 
-# Python Cache
+# =========================
+# Python cache / build files
+# =========================
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 dist/
 build/
+*.egg
 
-# Large Training Artifacts
+# =========================
+# Training outputs
+# =========================
 results/logs/
 results/models/
-results/
-*.csv
+results/*.csv
 
-# Images
+# =========================
+# Generated images
+# =========================
 *.png
 
-# Test & Debug Files
+# =========================
+# Local test / debug files
+# =========================
 notebooks/crash_test.ipynb
 overseer_cleanup/test_env.py
 overseer_cleanup/test_grid_manual.py
 
-# Local Temp Files
-.zip/
+# =========================
+# Temporary / archive files
+# =========================
 *.tmp
-.gitignore
+*.zip
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# OS / editor files
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
