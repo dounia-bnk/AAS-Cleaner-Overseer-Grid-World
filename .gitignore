@@ -1,16 +1,33 @@
+# Virtual Environments
 .venv/
 env/
-ENV/venv/
 venv/
-.zip/
+ENV/
+
+# Python Cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Large Training Artifacts
 results/logs/
 results/models/
+results/
+*.csv
+
+# Images
 *.png
+
+# Test & Debug Files
 notebooks/crash_test.ipynb
-__init__.py
 overseer_cleanup/test_env.py
 overseer_cleanup/test_grid_manual.py
+
+# Local Temp Files
+.zip/
+*.tmp
 .gitignore
-project_spec.md

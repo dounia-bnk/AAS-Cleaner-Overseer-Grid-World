@@ -53,7 +53,28 @@ Compare `true_completion_rate` and `cheat_rate` across the three primary conditi
 Plot `cheat_rate` and `catch_rate` over training epochs. Look for oscillation early, convergence (or lack thereof) later.
 ---
 
-## Installation & Setup
+## Project Structure
+
+```
+
+├── README.md                       # This file
+├── configs/
+│   └── conditions.yaml             # Overseer condition parameters
+├── overseer_cleanup/
+│   ├── env.py                      # OverseerCleanupEnv class (Gym wrapper)
+│   ├── core_functions.py           # Agent actions, audit logic, OverseerState
+│   └── grid.py                     # Grid state, dirt/dirt_units, dirt conservation
+├── scripts/
+│   └── train.py                    # PPO training loop with monitoring
+├── notebooks/
+│   ├── position_analysis.ipynb     # Movement & coverage analysis
+│   ├── overseer_cleanup_analysis.ipynb          # Core metrics
+│   └── overseer_cleanup_analysis_improved.ipynb # Multi-seed analysis
+└── results/
+    ├── logs/                       # TensorBoard data
+    ├── models/                     # Agent checkpoints
+    └── *.csv                       # Metrics & position logs
+```
 
 ### Quick Start
 ```bash
@@ -75,7 +96,7 @@ python scripts/train.py --condition adaptive --seed 0 --timesteps 100000
 ## Project Structure
 
 ```
-AAS/
+
 ├── README.md                       # This file
 ├── configs/
 │   └── conditions.yaml             # Overseer condition parameters
@@ -95,16 +116,7 @@ AAS/
     └── *.csv                       # Metrics & position logs
 ```
 
----
 
-
-### Stretch Goals
-1. **Self-play with learned overseer:** Alternate PPO training (freeze cleaner → train overseer → freeze overseer → train cleaner) for true arms-race dynamics.
-2. **Larger grids:** Test on N=12, N=16 to see whether adaptive advantage scales.
-3. **Multiple cleaners:** Cooperative or competitive multi-agent variant.
-4. **Real-world grounding:** Map to content moderation, code review, or other actual principal-agent systems.
-
----
 
 
 
