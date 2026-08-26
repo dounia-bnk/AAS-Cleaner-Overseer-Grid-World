@@ -7,3 +7,10 @@ __pycache__/
 *.pyc
 results/logs/
 results/models/
+*.png
+notebooks/crash_test.ipynb
+__init__.py
+overseer_cleanup/test_env.py
+overseer_cleanup/test_grid_manual.py
+.gitignore
+project_spec.md
