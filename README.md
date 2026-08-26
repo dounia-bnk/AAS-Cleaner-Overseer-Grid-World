@@ -19,7 +19,7 @@ This models real-world principal-agent problems (ontent moderation, safety testi
 ## Core Environment: OverseerCleanupEnv
 
 ### Grid & Setup
-- **N × N grid** (default N=8), episodic with max 150 timesteps
+- **8 × 8 grid** , episodic with max 150 timesteps
 - **~20% of grid cells** are randomly initialized with dirt each episode
 - Agent's position is fully observable; dirt positions are **not** (agent only sees a 5×5 local window)
 - **No camera position is observable** to the cleaner (adds realistic difficulty)
